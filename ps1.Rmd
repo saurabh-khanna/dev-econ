@@ -1,0 +1,149 @@
+---
+title: "ECON 214 Problem Set 1"
+author: "Saurabh Khanna"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: no
+  html_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: no
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, fig.retina = 4)
+```
+
+```{r, echo = FALSE}
+# Libraries
+pacman::p_load(tidyverse, estimatr, haven, texreg, countrycode, hrbrthemes)
+extrafont::loadfonts()
+
+# Parameters
+df_q1 <- read_dta(here::here("data", "AJ2007_dataset.dta"))
+```
+
+
+# Problem set 1
+
+## Answer 1
+
+### 1.1
+
+Yet to answer
+
+### 1.2
+
+```{r}
+df_q1 %>%
+  na_if("") %>% 
+  fill(initialincome) %>% 
+  mutate_at(vars(lifeexpectancy, gdppercapita), ~ log(.)) %>%
+  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata") %>% 
+  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE)
+```
+
+
+### 1.3
+
+```{r}
+continents <-
+  df_q1 %>% 
+  pull(country) %>% 
+  countrycode(origin = "country.name", destination = "continent")
+
+df_q1_cont <- 
+  df_q1 %>%
+  bind_cols(continents) %>% 
+  rename(continent = `...9`) %>% 
+  mutate(
+    continent = if_else(country %in% c("Australia", "New Zealand", "United States"), "Europe", continent),
+    continent = if_else(continent == "Americas", "Latin America", continent) 
+  ) %>% 
+  na_if("") %>% 
+  fill(initialincome) %>% 
+  mutate_at(vars(lifeexpectancy, gdppercapita), ~ log(.))
+
+lm1 <-
+  df_q1_cont %>% 
+  filter(continent == "Asia") %>% 
+  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata")
+
+lm2 <-
+  df_q1_cont %>% 
+  filter(continent == "Latin America") %>% 
+  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata")
+
+lm3 <-
+  df_q1_cont %>% 
+  filter(continent == "Europe") %>% 
+  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata") 
+
+screenreg(list(lm1, lm2, lm3), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.model.names  = c("Asia", "Latin America", "Europe"))
+```
+
+
+### 1.4
+
+```{r}
+df_q1_cont %>%
+  mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
+  group_by(continent, country) %>% 
+  summarize(
+    predictedmortality = abs(diff(predictedmortality)),
+    gdp_change = diff(gdppercapita)
+  ) %>% 
+  ggplot(aes(predictedmortality, gdp_change)) +
+  geom_point(shape = 21, size = 3, aes(color = continent)) +
+  geom_smooth(method = "lm_robust", aes(color = "Overall"), se = F, linetype = "dashed", size = 1.5) +
+  geom_smooth(method = "lm_robust", aes(color = continent), se = F) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1")
+```
+
+
+###  1.5
+
+```{r}
+df_q1_cont %>% 
+  mutate(
+    fe = str_c(continent, year, sep = "_")
+  ) %>% 
+  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ fe, se_type = "stata") %>% 
+  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE)
+```
+
+
+### 1.6
+
+```{r, fig.asp=2}
+df_plot <-
+  df_q1_cont %>%
+  mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
+  group_by(continent, country) %>% 
+  summarize(
+    predictedmortality = abs(diff(predictedmortality)),
+    gdp_change = diff(gdppercapita)
+  )
+  
+df_plot %>%   
+  ggplot(aes(predictedmortality, gdp_change)) +
+  geom_point(size = 3, aes(color = continent), show.legend = F) +
+  ggrepel::geom_label_repel(
+    data = df_plot,
+    aes(label = country),
+    color = "black"
+  ) +
+  facet_wrap(vars(continent), ncol = 1) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1")
+```
+
+
+### 1.7
+
+Yet to answer
