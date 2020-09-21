@@ -20,37 +20,15 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, fig.retina
 
 ```{r, echo = FALSE}
 # Libraries
-pacman::p_load(tidyverse, estimatr, haven, texreg, countrycode, hrbrthemes)
+pacman::p_load(tidyverse, estimatr, haven, texreg, countrycode, sf)
 extrafont::loadfonts()
 
 # Parameters
 df_q1 <- read_dta(here::here("data", "AJ2007_dataset.dta"))
-```
+df_q2 <- read_dta(here::here("data", "replic_malaria_us.dta"))
+shapefile <- read_sf("data/TM_WORLD_BORDERS_SIMPL-0.3.shp")
 
-
-# Problem set 1
-
-## Answer 1
-
-### 1.1
-
-Yet to answer
-
-### 1.2
-
-```{r}
-df_q1 %>%
-  na_if("") %>% 
-  fill(initialincome) %>% 
-  mutate_at(vars(lifeexpectancy, gdppercapita), ~ log(.)) %>%
-  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata") %>% 
-  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE)
-```
-
-
-### 1.3
-
-```{r}
+# created
 continents <-
   df_q1 %>% 
   pull(country) %>% 
@@ -61,37 +39,123 @@ df_q1_cont <-
   bind_cols(continents) %>% 
   rename(continent = `...9`) %>% 
   mutate(
-    continent = if_else(country %in% c("Australia", "New Zealand", "United States"), "Europe", continent),
+    continent = if_else(country %in% c("Australia", "New Zealand", "United States", "Canada"), "Europe", continent),
     continent = if_else(continent == "Americas", "Latin America", continent) 
   ) %>% 
   na_if("") %>% 
   fill(initialincome) %>% 
   mutate_at(vars(lifeexpectancy, gdppercapita), ~ log(.))
+```
 
+
+# Problem set 1
+
+## Answer 1
+
+### 1.1
+
+I do not fully agree with the instrument of predicted mortality used by Acemoglu and Johnson. The mortality predicted from a set of selected diseases in 1940, is a subset of total mortality in 1940 and thus is likely to be highly correlated with initial life expectancy. If initial life expectancy matters for economic growth (which is likely), then the Acemoglu and Johnson instrument is correlated with this omitted variable, making estimates inconsistent.
+
+Further, I also see that the sample is not representative as it excludes all of Africa and large parts of Central Asia and the Middle East. The extent of global coverage in their sample can be seen below. 
+
+```{r}
+shapefile %>% 
+  select(country = NAME) %>% 
+   mutate(
+    country = if_else(str_detect(country, "Korea, Republic of"), "Korea, Rep.", country),
+    country = if_else(country == "Venezuela", "Venezuela, RB", country)
+  ) %>% 
+  left_join(df_q1_cont, by = "country") %>%
+  ggplot() +
+  geom_sf(size = 0.3, aes(fill = continent)) +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  labs(fill = "Continent (assigned)")
+```
+
+\newpage
+
+### 1.2
+
+For a given country $i$, we assess the following model:
+
+$$ln(gdp)_{i} = ln(lifeexp)_{i} + X_i + \epsilon_i$$
+
+where $ln(lifeexp)_{i}$ is instrumented by $predictedmortality_i$, and $X_i$ indicates _country$\times$year_ fixed effects.
+
+The results from running our model are seen below.
+
+```{r}
+df_q1 %>%
+  na_if("") %>% 
+  fill(initialincome) %>% 
+  mutate(
+    fe = str_c(country, year, sep = "_")
+  ) %>% 
+  iv_robust(
+    log(gdppercapita) ~ log(lifeexpectancy) | predictedmortality, data = ., 
+    fixed_effects = ~ country * year, 
+    se_type = "stata"
+  ) %>% 
+  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE)
+```
+
+
+My estimate is very close to the authors' estimate, but my standard error is smaller. This could be because the authors might be clustering standard errors at the country level (which gives me a standard error around 0.51).
+
+
+\newpage
+
+### 1.3
+
+We now implement the model described in 1.2 separately for each continent. The results can be seen below:
+
+
+```{r}
 lm1 <-
   df_q1_cont %>% 
   filter(continent == "Asia") %>% 
-  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata")
+  iv_robust(
+    gdppercapita ~ lifeexpectancy | predictedmortality, 
+    data = ., 
+    fixed_effects = ~ country * year, 
+    se_type = "stata"
+  )
 
 lm2 <-
   df_q1_cont %>% 
-  filter(continent == "Latin America") %>% 
-  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata")
+  filter(continent == "Latin America") %>%
+  iv_robust(
+    gdppercapita ~ lifeexpectancy | predictedmortality, 
+    data = ., 
+    fixed_effects = ~ country * year, 
+    se_type = "stata"
+  )
+# 0.2373, se = 0.94
 
 lm3 <-
   df_q1_cont %>% 
   filter(continent == "Europe") %>% 
-  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ country, se_type = "stata") 
+  iv_robust(
+    gdppercapita ~ lifeexpectancy | predictedmortality, 
+    data = ., 
+    fixed_effects = ~ country * year, 
+    se_type = "stata"
+  ) 
 
-screenreg(list(lm1, lm2, lm3), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.model.names  = c("Asia", "Latin America", "Europe"))
+screenreg(list(lm1, lm2, lm3), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.model.names  = c("Asia", "Latin America", "Europe"), custom.coef.names	= "log(life expectancy)")
 ```
 
+For Asia, the effects of life expectancy on GDP per capita are large and negative, but not significant. The effects are not significant for Latin America either, though they are slightly positive in terms of direction. For Europe, the effects are positive, large and significant at the 1% level. This indicates that increasing life expectancy significantly increases GDP per capita, but only in Europe.
+
+
+\newpage
 
 ### 1.4
 
 ```{r}
 df_q1_cont %>%
-  mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
+  #mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
   group_by(continent, country) %>% 
   summarize(
     predictedmortality = abs(diff(predictedmortality)),
@@ -102,20 +166,44 @@ df_q1_cont %>%
   geom_smooth(method = "lm_robust", aes(color = "Overall"), se = F, linetype = "dashed", size = 1.5) +
   geom_smooth(method = "lm_robust", aes(color = continent), se = F) +
   theme_bw() +
-  scale_color_brewer(palette = "Set1")
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    x = "Predicted mortality",
+    y = "Change in log GDP per capita"
+  )
 ```
 
+The continent-wise regression lines highlight the trends found in the previous tables. The dashed line highlights the negative coefficient found overall while controlling for country-year fixed effects.
+
+
+\newpage
 
 ###  1.5
+
+For a given country $i$, we assess the following model:
+
+$$ln(gdp)_{i} = ln(lifeexp)_{i} + Z_i + \epsilon_i$$
+
+where $ln(lifeexp)_{i}$ is instrumented by $predictedmortality_i$, and $Z_i$ indicates _continent$\times$year_ fixed effects.
+
+The results from running this model are seen below.
+
 
 ```{r}
 df_q1_cont %>% 
   mutate(
     fe = str_c(continent, year, sep = "_")
+  ) %>%
+  iv_robust(
+    gdppercapita ~ lifeexpectancy | predictedmortality, 
+    data = ., 
+    fixed_effects = ~ continent * year, 
+    se_type = "stata"
   ) %>% 
-  iv_robust(gdppercapita ~ lifeexpectancy | predictedmortality, data = ., fixed_effects = ~ fe, se_type = "stata") %>% 
-  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE)
+  screenreg(stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.coef.names	= "log(life expectancy)")
 ```
+
+We see that the effects of life expectancy of GDP per capital growth are positive now, though not significant. I think this is a better specification than what Acemoglu et al. use because - a) countries within the same continent are likely to have similar pre-treatment characteristics like disease exposure, climates, transportation, access to trade routes etc, and b) within-country comparisons (via country fixed effects) make less sense when we are trying to find international trends that exhibit themselves across countries.
 
 
 ### 1.6
@@ -123,7 +211,7 @@ df_q1_cont %>%
 ```{r, fig.asp=2}
 df_plot <-
   df_q1_cont %>%
-  mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
+  # mutate_at(vars(lifeexpectancy, gdppercapita), ~ exp(.)) %>% 
   group_by(continent, country) %>% 
   summarize(
     predictedmortality = abs(diff(predictedmortality)),
@@ -140,10 +228,395 @@ df_plot %>%
   ) +
   facet_wrap(vars(continent), ncol = 1) +
   theme_bw() +
-  scale_color_brewer(palette = "Set1")
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    x = "Predicted mortality",
+    y = "Change in log GDP"
+  )
 ```
 
 
+We can group the countries by `initialincome`. From the figure ahead, we see that this variables generates cleaner and more distinct clusters. For instance, rich countries are all nicely clumped near the top left on account of low predicted mortality and high per capita GDP growth. As we move towards middle and poor income countries, the points start moving towards the bottom right corner of the graph.
+
+
+```{r, fig.asp = 2}
+df_plot <-
+  df_q1_cont %>%
+  group_by(initialincome, country) %>% 
+  summarize(
+    predictedmortality = abs(diff(predictedmortality)),
+    gdp_change = diff(gdppercapita)
+  ) %>% 
+  mutate(
+    initialincome = factor(initialincome, levels = c("Rich", "Middle", "Poor"))
+  )
+
+df_plot %>%   
+  ggplot(aes(predictedmortality, gdp_change)) +
+  geom_point(size = 3, aes(color = initialincome), show.legend = F) +
+  ggrepel::geom_label_repel(
+    data = df_plot,
+    aes(label = country),
+    color = "black"
+  ) +
+  facet_wrap(vars(initialincome), ncol = 1) +
+  theme_bw() +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    x = "Predicted mortality",
+    y = "Change in log GDP"
+  )
+```
+
+
+\newpage
+
 ### 1.7
 
-Yet to answer
+Cervelatti and Sunde argue that the effect of life expectancy on economic growth depends on what stage of demographic transition a country is in. Improving health in countries in which the fertility transition has not yet taken place could have negative effects on economic development, mainly due to rise in population size. Improving health in countries that have undergone the fertility transition, however, has positive growth effects. In addition, increases in life expectancy increase the likelihood that the fertility transition occurs. I think this criticism is justified because in the presence of non-monotonic effects, the interpretation of the average treatment effect of life expectancy may be difficult, and potentially misleading. Researchers need to consider different stages of demographic development in addition to different identification strategies.
+
+
+Bloom, Canning and Fink argue that the negative sign on Acemoglu and Johnson’s life expectancy coefficient can be reversed by including omitted variables such as initial levels of life expectancy and income per capita. This criticism is in line with my doubts regarding Acemoglu's predicted mortality as a non-ideal instrument and is warranted. Bloom et al. show that the negative relationship captured by Acemoglu, besides being instrumented poorly, is measuring a contemporaneous relationship between health and economic growth which should be negative, as health does not have an immediate impact on life expectancy.
+
+\newpage
+
+## Answer 2
+
+
+### 1(a)
+
+A simple regression of wages on malaria intensity is problematic because the treatment is not exogenously determined. firstly, such a specification likely omits a considerable number of variables like poverty and unemployment rates, which can be correlated with both the treatment and the dependent variable. Since the $\beta$ on malaria intensity in this regression is likely negative, and poverty and unemployment rates can be positively correlated with malaria intensity, the estimated coefficients on malaria intensity might be underestimated.
+
+
+### 1(b)
+
+Since the paper uses a variation of a difference-in-differences approach, the parallel trends assumption is a crucial identification one to uphold. In other words, in the absence of the malaria intervention, the difference in wages between high and low malaria regions should stay constant over time. Since we have time series data for areas of high and low malaria intensity, we could plot trends before and after the treatment time to see of this assumption is satisfied.
+
+\newpage
+
+### 2(a)
+
+```{r, eval = F}
+quantile(df_q2$malmort1890, c(0.1, 0.9), na.rm = T)
+```
+
+
+```{r}
+df_q2 <- 
+  df_q2 %>% 
+  mutate(
+    young = if_else(yob >= 1920, 1, 0),
+    old = if_else(yob <= 1899, 1, 0),
+    malaria_high = (malmort1890 >= 1.05929685),
+    malaria_low = (malmort1890 <= 0.04067992)
+  )
+
+df_q2a <-
+  df_q2 %>% 
+  filter(malaria_high) %>% 
+  group_by(yob) %>% 
+  summarize(
+    sei_high = mean(sei, na.rm = T)
+  ) %>% 
+  left_join(
+    df_q2 %>% 
+      filter(malaria_low) %>% 
+      group_by(yob) %>% 
+      summarize(
+        sei_low = mean(sei, na.rm = T)
+      ),
+    by = "yob"
+  ) %>% 
+  mutate(
+    sei_diff = sei_high - sei_low
+  )
+
+# df_q2a %>% filter(yob >= 1920) %>% summary()
+
+df_q2a %>% 
+  filter(yob %in% c(1820:1899, 1920:1960)) %>% 
+  ggplot(aes(yob, sei_diff)) +
+  geom_vline(xintercept = 1899, linetype = "dashed") +
+  geom_vline(xintercept = 1920, linetype = "dashed") +
+  geom_point(size = 2.5, shape = 21, fill = "gray") +
+  geom_segment(
+    aes(x = 1820, xend = 1899, y = mean(sei_diff), yend = mean(sei_diff)),
+    data = df_q2a %>% filter(yob <= 1899),
+    color = "blue", size = 1
+  ) +
+  geom_segment(x = 1899, xend = 1920, y = -0.2414, yend = -0.067453, color = "blue", size = 1) +
+  geom_segment(
+    aes(x = 1920, xend = 1960, y = mean(sei_diff), yend = mean(sei_diff)),
+    data = df_q2a %>% filter(yob >= 1920),
+    color = "blue", size = 1
+  ) +
+  scale_x_continuous(breaks = scales::breaks_width(20)) +
+  theme_bw() +
+  labs(
+    x = "Year of birth",
+    y = "Difference in log Duncan SEI Index"
+  )
+
+```
+
+
+This figure is in line with the author's argument as the difference in log Duncan SEI index between high and low income areas becomes is much less negative for cohorts receiving the treatment intervention (1920 and beyond). This corroborates the Bleakey's argument that relative to non-malarious areas, cohorts born after eradication had higher income as adults than the preceding generation. 
+
+\newpage
+
+### 2(b)
+
+Cohorts born between 1899 and 1920 should be excluded from these regressions as we are not considering partial exposure to treatment (yet). We assess the following model:
+
+$$sei/occscore_{jk} = malariaHigh_j + young_k + malariaHigh_j \times young_k + \epsilon_{jk}$$
+
+where we cluster standard errors at the state of birth `bplg` level.
+
+The results from running our model are seen below.
+
+```{r}
+lm1 <-
+  df_q2 %>%
+  filter(yob <= 1899 | yob >= 1920, malaria_high != malaria_low) %>%
+  lm_robust(sei ~ malaria_high * young, data = ., se_type = "stata", clusters = bplg)
+
+lm2 <-
+  df_q2 %>% 
+  filter(yob <= 1899 | yob >= 1920, malaria_high != malaria_low) %>%
+  lm_robust(occscore ~ malaria_high * young, data = ., se_type = "stata", clusters = bplg)
+
+screenreg(list(lm1, lm2), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.model.names  = c("Duncan SEI Index", "Occupational Income Score"))
+```
+
+\newpage
+
+### 2(c)
+
+Standard errors are clustered at the state of birth level. This is because presence and quality of eradication interventions often depends on state governments, hence making observations within a to be more correlated as opposed to observations across states.
+
+
+### 2(d)
+
+For the results of this study to be internally valid, the identification strategy needs the parallel trend assumption to hold. It requires that in the absence of treatment (i.e. cohorts born in 1899 and before), the difference between the treatment (high malaria) and control (low malaria) groups is constant over time. In the figure generated for 2(a), the sustained dispersion of points before 1899 hints that the parallel trends assumption may be satisfied. 
+
+\newpage
+
+### 2(e)
+
+```{r}
+df_q2 %>%
+  filter(yob %in% c(1860:1899, 1920:1940), malaria_high != malaria_low) %>% 
+  ggplot(aes(yob, sei)) +
+  geom_smooth(
+    aes(fill = malaria_low), size = 1, method = "lm_robust",
+    data = df_q2 %>% filter(yob %in% 1860:1899) %>% drop_na(malaria_low)
+  ) +
+  geom_smooth(
+    aes(fill = malaria_low), size = 1, method = "lm_robust",
+    data = df_q2 %>% filter(yob %in% 1920:1940) %>% drop_na(malaria_low)
+  ) +
+  geom_vline(xintercept = 1899, linetype = "dashed") +
+  geom_vline(xintercept = 1920, linetype = "dashed") +
+  theme_bw() +
+  labs(
+    x = "Year of birth",
+    y = "Duncan's SEI Index",
+    fill = "Low malaria"
+  )
+```
+
+The figure above shows that the parallel trends assumption is broadly satisfied.
+
+\newpage
+
+### 2(f)
+
+Cohorts born between 1899 and 1920 should be excluded from these regressions as we are not considering partial exposure to treatment (yet). $\Delta Y_i$ is the change in the average value of $Y$ for the area $j$, from the “before” to the “after” period. The “after” period begins when the eradication campaigns are taken to have commenced - 1920. The “before” period ends in 1899 in the United States. The latter cut-offs are chosen to assure that all children born in the “before” period would have reached adulthood by the campaign, and so would have experienced no campaign-induced reduction in childhood malaria exposure. This specification can also be viewed as two-period panel regressions in which is $young$ a dummy for the second period, $malmort1899 \times young$ is the treatment proxy.
+
+
+We assess the following model:
+
+$$sei/occscore_{jk} = malmort1890_j + young_k + malmort1890_j \times young_k + \epsilon_{jk}$$
+
+where we cluster standard errors at the state of birth `bplg` level and use `wtbpl` as weights.
+
+```{r}
+lm1 <-
+  df_q2 %>% 
+  filter(yob <= 1899 | yob >= 1920) %>%
+  lm_robust(sei ~ malmort1890 * young, data = ., se_type = "stata", clusters = bplg, weights = wtbpl)
+
+lm2 <-
+  df_q2 %>% 
+  filter(yob <= 1899 | yob >= 1920) %>%
+  lm_robust(occscore ~ malmort1890 * young, data = ., se_type = "stata", clusters = bplg, weights = wtbpl)
+
+screenreg(list(lm1, lm2), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, custom.model.names  = c("Duncan SEI Index", "Occupational Income Score"))
+```
+
+
+The number of observations for each state can be seen below:
+
+```{r}
+df_q2 %>% 
+  filter(yob <= 1899 | yob >= 1920, malaria_high != malaria_low) %>%
+  count(bplg, name = "observations") %>% 
+  knitr::kable()
+```
+
+\newpage
+
+### 2(g)
+
+Bleakey includes model with additional controls to minimize the risk of omitted variable bias. These controls are also proxy for cross-area differences in income, health, and other factors measured prior to the eradication campaign that might affect or correlate with the evolution of outcomes across cohorts. 
+I infer that Bleakey's results are consistent in size and significance even after adding these additional controls.
+
+\newpage
+
+## Answer 3
+
+### 3(a)
+
+The graph shows that for those born before 1900, more pre-eradication malaria predicts lower adult income on average. For those born after 1920, there is no negative relationship between pre-campaign malaria and adult income. For cohorts born between 1899 and 1920 (who were partially affected by the malaria eradication program), pre-campaign malaria predicts lower income, but with magnitudes that diminish for later birth years.
+
+To produce this figure, I run a loop on each cohort (`yob`) assessing the following model:
+
+$$sei/occscore_{jkt} = malmort1890_{j,pre} + \epsilon_jkt$$
+
+where I cluster standard errors at the state of birth `bplg` level and use `wtbpl` as weights. The estimates for each `yob` are then extracted and plotted in the graph below.
+
+
+```{r}
+yob <- df_q2 %>% distinct(yob) %>% arrange(yob) %>% unlist()
+results <- tibble()
+
+for (y in yob) {
+  results <-
+    bind_rows(
+      results,
+      df_q2 %>%
+        filter(yob == y) %>%
+        lm_robust(sei ~ malmort1890, data = ., se_type = "stata", clusters = bplg, weights = wtbpl) %>%
+        tidy() %>%
+        bind_cols(yob = y, .)
+    )
+}
+
+#results %>% filter(str_detect(term, "malmort"), yob <= 1899) %>% summary()
+
+results %>%
+  filter(str_detect(term, "malmort")) %>%
+  sample_frac() %>% 
+  ggplot(aes(yob, estimate)) +
+  geom_point(aes(size = 1 / std.error), shape = 21, fill = "grey", show.legend = F) +
+  geom_vline(xintercept = 1899, linetype = "dashed") +
+  geom_vline(xintercept = 1920, linetype = "dashed") +
+  geom_segment(
+    aes(x = 1820, xend = 1899, y = -0.2238, yend = -0.2238),
+    color = "blue", size = 1
+  ) +
+  geom_segment(x = 1899, xend = 1920, y = -0.2238, yend = -0.07471, color = "blue", size = 1) +
+  geom_segment(
+    aes(x = 1920, xend = 1960, y = -0.07471, yend = -0.07471),
+    color = "blue", size = 1
+  ) +
+  scale_x_continuous(breaks = scales::breaks_width(20)) +
+  theme_bw() +
+  labs(
+    x = "Year of birth",
+    y = "Estimate of beta",
+    caption = "Note: Size of the points varies inversely with the size of the standard errors"
+  )
+```
+
+\newpage
+
+### 3(b)
+
+We assess the following models:
+
+$$sei/occscore_{jkt} = malmort1890_j + expmal_k + malmort1890_j \times expmal_k + bpgl_j + year_k + \epsilon_jkt$$
+
+where we cluster standard errors at the state of birth `bplg` level and use `wtbpl` as weights.
+
+
+Model 1 is the baseline and controls for year of birth fixed effects. The estimates here are similar to those estimated using long differences across cohorts.
+
+Model 2 controls for the fact that if the effect of malaria interventions on income were truly via contemporaneous exposure, this might appear as a cohort effect in that those born earlier spending a larger fraction of their working lives exposed to malaria. This model allows for birthplace-specific trend and level shift after 1920, hence including extra controls for bplg $\times$ post1920 and bplg $\times$ post1920_yr 90 [Here, post1920 = (year > 1920) and post1920_yr = (year - 1920) * post1920]. 
+
+Model 3 controls for b $\times$ year fixed effects, and effectively relaxes the assumption that pre-campaign time trends were the same across areas.
+
+The results can be seen below:
+
+```{r}
+lm1 <-
+  df_q2 %>%
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year), data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm2 <-
+  df_q2 %>%
+  mutate(
+    post1920 = (year > 1920),
+    post1920_yr = (year - 1920) * post1920
+  ) %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(bplg * post1920) + factor(bplg * post1920_yr) + factor(year), data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm3 <-
+  df_q2 %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year) + factor(bplg * year), data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+screenreg(list(lm1, lm2, lm3), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, omit.coef = c("^m|^f|l$"))
+```
+
+
+\newpage
+
+### 3(c)
+
+Bleakey controls for polynomials of cohort age because the polynomial models are fit to the full time span of available data. This gives more influence to longer-term developments, while attempting to compensate with the flexible controls in different specifications. 
+
+The models 1,2, and 3 specified in 3(b) are implemented with adding first and second order polynomial terms for `yob` interacting with `bplg`. The results can be seen below:
+
+```{r}
+lm1a <-
+  df_q2 %>%
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year) + bplg:yob, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm1b <-
+  df_q2 %>%
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year) + bplg:yob + bplg:I(yob)^2, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm2a <-
+  df_q2 %>%
+  mutate(
+    post1920 = (year > 1920),
+    post1920_yr = (year - 1920) * post1920
+  ) %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(bplg * post1920) + factor(bplg * post1920_yr) + factor(year) + bplg:yob, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm2b <-
+  df_q2 %>%
+  mutate(
+    post1920 = (year > 1920),
+    post1920_yr = (year - 1920) * post1920
+  ) %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(bplg * post1920) + factor(bplg * post1920_yr) + factor(year) + bplg:yob + bplg:I(yob)^2, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm3a <-
+  df_q2 %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year) + factor(bplg * year) + bplg:yob, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+lm3b <-
+  df_q2 %>% 
+  lm_robust(sei ~ exp_mal * malmort1890 + factor(bplg) + factor(year) + factor(bplg * year) + bplg:yob + bplg:I(yob)^2, data = ., se_type = "stata", fixed_effects = ~ yob, clusters = bplg, weights = wtbpl)
+
+
+screenreg(list(lm1a, lm1b, lm2a, lm2b, lm3a, lm3b), stars = c(0.01, 0.05, 0.1), include.ci = FALSE, omit.coef = c("^m|^f|l$|^b"), custom.model.names = c("1a", "1b", "2a", "2b", "3a", "3b"))
+```
+
+\newpage
+
+### 3(d)
+
+Bleakey had to use heterogeneous measures of malaria across countries. In order to make results comparable, he constructed reduced-form differences by comparing the most malarious to the least malarious areas within each country. Bleakey's normalized estimates consist of two parameters - (i) the effect on adult income of a given childhood malaria burden, and (ii) the magnitude of decline of the malaria burden following the eradication campaigns. The first parameter is in units of income per infection rate and can be applied to other situations with known infection rates. The order of magnitude of the second parameter is then used to calculate the approximate effect on adult income of childhood malaria exposure in units of infection rates.
+
